@@ -1,29 +1,31 @@
 #!/usr/bin/groovy
+
 @Library('github.com/fabric8io/fabric8-pipeline-library@master')
+def canaryVersion = "1.0.${env.BUILD_NUMBER}"
 def utils = new io.fabric8.Utils()
-clientsNode{
-  def envStage = utils.environmentNamespace('stage')
-  def newVersion = ''
 
+mavenNode {
   checkout scm
+  if (utils.isCI()) {
 
-  stage('Build Release')
-  echo 'NOTE: running pipelines for the first time will take longer as build and base docker images are pulled onto the node'
-  if (!fileExists ('Dockerfile')) {
-    writeFile file: 'Dockerfile', text: 'FROM golang:onbuild'
+    mavenCI {
+        integrationTestCmd =
+             "mvn org.apache.maven.plugins:maven-failsafe-plugin:integration-test \
+                org.apache.maven.plugins:maven-failsafe-plugin:verify \
+                -Dnamespace.use.current=false -Dnamespace.use.existing=${utils.testNamespace()} \
+                -Dit.test=*IT -DfailIfNoTests=false -DenableImageStreamDetection=true \
+                -P openshift-it"
+    }
+
+  } else if (utils.isCD()) {
+    echo 'NOTE: running pipelines for the first time will take longer as build and base docker images are pulled onto the node'
+    container(name: 'maven', shell:'/bin/bash') {
+      stage('Build Image') {
+        mavenCanaryRelease {
+          version = canaryVersion
+        }
+      }
+    }
   }
-
-  newVersion = performCanaryRelease {}
-
-  def rc = getDeploymentResources {
-    port = 8080
-    label = 'golang'
-    icon = 'https://cdn.rawgit.com/fabric8io/fabric8/dc05040/website/src/images/logos/gopher.png'
-    version = newVersion
-    imageName = clusterImageName
-  }
-
-  stage('Rollout to Stage')
-  kubernetesApply(file: rc, environment: envStage)
-
 }
+
